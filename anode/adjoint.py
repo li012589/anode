@@ -35,44 +35,42 @@ def flatten_params_grad(params, params_ref):
 class Checkpointing_Adjoint(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, *args):
-        z0, func, flat_params, options= args[0], args[1], args[2], args[3]
+    def forward(ctx, z0, func, options, *_params):
         ctx.func = func
 
         with torch.no_grad():
-            ans = odesolver(func, z0, options) 
-        ctx.save_for_backward(z0, flat_params)
+            ans = odesolver(func, z0, options)
+        ctx.save_for_backward(z0, *_params)
         ctx.in1 = options
         return ans
 
     @staticmethod
     def backward(ctx, grad_output):
 
-        z0, f_params = ctx.saved_tensors
+        z0, *_params = ctx.saved_tensors
         options = ctx.in1
         func = ctx.func
         t = 0
 
+        _params = tuple(_params)
+
         with torch.set_grad_enabled(True):
-            z = Variable(z0.detach(),requires_grad=True)
-            func_eval = odesolver(func, z, options) 
-            out1 = torch.autograd.grad(
-               func_eval,  z,
-               grad_output, allow_unused=True, retain_graph=True)
-            out2 = torch.autograd.grad(
-               func_eval,  f_params,
+            z = Variable(z0.detach(), requires_grad=True)
+            func_eval = odesolver(func, z, options)
+            out = torch.autograd.grad(
+               func_eval,  (z, ) + _params,
                grad_output, allow_unused=True, retain_graph=True)
 
-        return out1[0], None, flatten_params_grad(out2, f_params), None
-
+        return out[0], None, None, *out[1:]
 
 
 def odesolver_adjoint(func, z0, adjoint_params=None, options = None):
 
     if adjoint_params is None:
-        flat_params = flatten_params(func.parameters())
+        _params = func.parameters()
     else:
-        flat_params = flatten_params(adjoint_params)
-    zs = Checkpointing_Adjoint.apply(z0, func, flat_params, options)
+        _params = adjoint_params
+    _params = tuple(term for term in _params if term.requires_grad)
+    zs = Checkpointing_Adjoint.apply(z0, func, options, *_params)
 
     return zs
