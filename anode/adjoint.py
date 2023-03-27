@@ -41,21 +41,20 @@ class Checkpointing_Adjoint(torch.autograd.Function):
 
         with torch.no_grad():
             ans = odesolver(func, z0, options) 
-        ctx.save_for_backward(z0)
+        ctx.save_for_backward(z0, flat_params)
         ctx.in1 = options
         return ans
 
     @staticmethod
     def backward(ctx, grad_output):
 
-        z0 = ctx.saved_tensors
+        z0, f_params = ctx.saved_tensors
         options = ctx.in1
         func = ctx.func
-        f_params = func.parameters()
         t = 0
 
         with torch.set_grad_enabled(True):
-            z = Variable(z0[0].detach(),requires_grad=True)
+            z = Variable(z0.detach(),requires_grad=True)
             func_eval = odesolver(func, z, options) 
             out1 = torch.autograd.grad(
                func_eval,  z,
@@ -64,13 +63,16 @@ class Checkpointing_Adjoint(torch.autograd.Function):
                func_eval,  f_params,
                grad_output, allow_unused=True, retain_graph=True)
 
-        return out1[0], None, flatten_params_grad(out2, func.parameters()), None
+        return out1[0], None, flatten_params_grad(out2, f_params), None
 
 
 
-def odesolver_adjoint(func, z0, options = None):
+def odesolver_adjoint(func, z0, adjoint_params=None, options = None):
 
-    flat_params = flatten_params(func.parameters())
+    if adjoint_params is None:
+        flat_params = flatten_params(func.parameters())
+    else:
+        flat_params = flatten_params(adjoint_params)
     zs = Checkpointing_Adjoint.apply(z0, func, flat_params, options)
 
     return zs
